@@ -21,6 +21,8 @@ CREATE TABLE fact_regional_indicator (
     rasio_jenis_kelamin         NUMERIC(6, 2),
     laju_pertumbuhan_persen     NUMERIC(6, 2),
     pdrb_growth_persen          NUMERIC(6, 2),
+    pmdn_juta_rp                NUMERIC(14, 2),
+    pma_ribu_usd                NUMERIC(14, 2),
     kategori_wilayah            VARCHAR(20),
     periode_ikn                 VARCHAR(20),
     UNIQUE (kabupaten_kota, tahun)

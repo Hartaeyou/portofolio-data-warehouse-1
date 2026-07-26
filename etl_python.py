@@ -195,8 +195,68 @@ def load_kependudukan() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# 4. FIX KNOWN DATA QUALITY ISSUES
+# 3b. EXTRACT + TRANSFORM: Investasi (PMDN & PMA) - opsional, cakupan tahun
+#     terbatas (2015-2023, belum ada 2024 saat data ini diambil). PMDN dan PMA
+#     TIDAK digabung karena satuan mata uang berbeda (PMDN = Juta Rupiah,
+#     PMA = Ribu US Dollar) - digabung tanpa konversi kurs akan salah secara
+#     matematis. Keduanya dianalisis terpisah sebagai indikator pelengkap.
+#
+#     PENTING: berbeda dengan penduduk & PDRB, growth rate (%) TIDAK dihitung
+#     untuk investasi. Data realisasi investasi bersifat 'lumpy' (bisa
+#     melonjak >40x dalam 1 tahun karena 1 proyek besar disetujui, atau
+#     bernilai 0 di tahun tanpa realisasi) - ini membuat persentase growth
+#     rate menghasilkan angka ekstrem/tidak terhingga yang tidak representatif,
+#     bahkan setelah dirata-ratakan pakai median sekalipun. Sebagai gantinya,
+#     investasi dianalisis dengan membandingkan RATA-RATA NILAI NOMINAL per
+#     tahun (before vs after) - pola yang sama seperti TPT/TPAK.
 # ---------------------------------------------------------------------------
+def load_investasi() -> pd.DataFrame:
+    investasi_dir = RAW_DIR / "investasi"
+    if not investasi_dir.exists():
+        return pd.DataFrame(columns=["kabupaten_kota", "tahun", "pmdn_juta_rp", "pma_ribu_usd"])
+
+    all_frames = []
+    for path in sorted(investasi_dir.glob("*.xlsx")):
+        wb = openpyxl.load_workbook(path, data_only=True)
+
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = list(ws.iter_rows(values_only=True))
+
+            judul = str(rows[0][1]) if len(rows[0]) > 1 and rows[0][1] else ""
+            if "PMDN" in judul:
+                indikator = "pmdn_juta_rp"
+            elif "PMA" in judul:
+                indikator = "pma_ribu_usd"
+            else:
+                print(f"[WARNING] Sheet '{sheet_name}' di {path.name} tidak dikenali (PMDN/PMA), dilewati. Judul: {judul!r}")
+                continue
+
+            years = [y for y in rows[1] if isinstance(y, int)]
+
+            for row in rows[2:]:
+                kabkota = row[0]
+                if kabkota is None or kabkota not in KABKOTA_VALID:
+                    continue
+                for i, year in enumerate(years):
+                    all_frames.append({
+                        "kabupaten_kota": _clean_kabkota_name(kabkota),
+                        "tahun": year,
+                        "indikator": indikator,
+                        "nilai": _clean_numeric_value(row[i + 1]),
+                    })
+
+    if not all_frames:
+        return pd.DataFrame(columns=["kabupaten_kota", "tahun", "pmdn_juta_rp", "pma_ribu_usd"])
+
+    df = pd.DataFrame(all_frames).drop_duplicates(subset=["kabupaten_kota", "tahun", "indikator"])
+    df = df.pivot_table(
+        index=["kabupaten_kota", "tahun"], columns="indikator", values="nilai"
+    ).reset_index()
+    df.columns.name = None
+    return df
+
+
 def fix_known_issues(df_penduduk: pd.DataFrame) -> pd.DataFrame:
     """
     Masalah #1: Samarinda 2021 'jumlah_penduduk_ribu' = 83.1 (typo sumber BPS,
@@ -245,12 +305,14 @@ def main():
     df_penduduk = load_kependudukan()
     df_penduduk = fix_known_issues(df_penduduk)
     df_penduduk = compute_growth_rate(df_penduduk)
+    df_investasi = load_investasi()
 
     # --- Fact table: gabungan semua indikator per kab/kota per tahun ---
     fact = (
         df_pdrb
         .merge(df_tenaga_kerja, on=["kabupaten_kota", "tahun"], how="outer")
         .merge(df_penduduk, on=["kabupaten_kota", "tahun"], how="outer")
+        .merge(df_investasi, on=["kabupaten_kota", "tahun"], how="left")  # left join: investasi cakupan tahun lebih pendek (s.d. 2023)
     )
     fact = compute_pdrb_growth_rate(fact)
     fact["kategori_wilayah"] = fact["kabupaten_kota"].map(KATEGORI_WILAYAH)
