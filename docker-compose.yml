@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ikn_kaltim_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ikn_user
+      POSTGRES_PASSWORD: ikn_pass
+      POSTGRES_DB: ikn_kaltim
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: ikn_kaltim_metabase
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
